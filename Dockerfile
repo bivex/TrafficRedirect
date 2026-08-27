@@ -1,5 +1,5 @@
 # Multi-stage production build for Traffic Redirect Engine
-FROM hexpm/elixir:1.20.3-erlang-29.0.5-alpine-3.20.0 AS builder
+FROM elixir:alpine AS builder
 
 RUN apk add --no-cache build-base git
 
@@ -20,7 +20,7 @@ RUN mix compile
 RUN mix release
 
 # Lean production image
-FROM alpine:3.20.0 AS runner
+FROM alpine:latest AS runner
 
 RUN apk add --no-cache libstdc++ openssl ncurses-libs
 
