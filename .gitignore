@@ -23,3 +23,5 @@ erl_crash.dump
 traffic_redirect-*.tar
 # Ignore task specification
 task.md
+dpx_report.md
+dpx_dashboard.html
