@@ -1,8 +1,8 @@
 # TrafficRedirect Engine 🚀
 
-High-performance, fault-tolerant **Traffic Distribution and Redirection Engine** built with **Elixir / OTP**, **Bandit**, and **Hexagonal Architecture (Ports & Adapters) / DDD**.
+High-performance, fault-tolerant **Traffic Distribution and Redirection Engine** built with **Elixir / OTP**, **Bandit**, **Ecto / PostgreSQL**, and **Hexagonal Architecture (Ports & Adapters) / DDD**.
 
-Designed for high-throughput AdTech environments requiring **sub-millisecond redirection latency ($< 0.1$ ms median)** and capable of processing **$135,000+$ requests per second** on a single node without blocking redirects on database writes.
+Designed for high-throughput AdTech environments requiring **sub-millisecond redirection latency ($< 0.1$ ms median)**, capable of processing **$135,000+$ requests per second** on a single node without blocking redirects on database writes, and sustaining **$82,000+$ persistent inserts per second into PostgreSQL**.
 
 ---
 
@@ -20,8 +20,18 @@ Measured on 10,000 concurrent requests across 100 parallel BEAM worker processes
 | **Database Read on Click** | **0 (Zero)** — In-memory lock-free ETS cache |
 | **Click Persistence Impact** | **0 ms** — Non-blocking in-memory batch buffer (`ClickBufferWorker`) |
 
-### 2. Docker Container Live HTTP Benchmarks (`wrk`)
-Measured against the containerized production OTP release (`traffic_redirect:latest` on Alpine Linux) over real HTTP/1.1 TCP connections:
+### 2. PostgreSQL Persistent Ingestion Benchmarks (Docker)
+Measured during parallel batch ingestion (`Repo.insert_all`) into PostgreSQL 16 on Alpine Linux:
+
+| Configuration | Batch Size | Parallel DB Workers | Write Throughput | Average Batch Time |
+|---|:---:|:---:|:---:|:---:|
+| **Default PostgreSQL** | 1,000 rows | 1 worker | $32,740\text{ writes/sec}$ | $30.54\text{ ms}$ |
+| **High-Load Tuned PG** | 1,000 rows | 8 workers | $71,386\text{ writes/sec}$ | $11.20\text{ ms}$ |
+| **High-Load Tuned PG** | 1,000 rows | 12 workers | **$82,799\text{ writes/sec}$** | **$8.20\text{ ms}$** |
+| **Data Integrity** | — | — | **100% (0 dropped clicks)** | **0 errors / 0 conflicts** |
+
+### 3. Docker Container Live HTTP Benchmarks (`wrk`)
+Measured against the containerized production OTP release (`traffic_redirect:latest`) over real HTTP/1.1 TCP connections:
 
 | Route / Scenario | Concurrency | Requests / Sec (RPS) | Latency (p50) | Latency (p99) | Status |
 |---|---|---|---|---|---|
@@ -88,7 +98,11 @@ lib/
 │   │
 │   └── infrastructure/                          # Infrastructure Layer (Adapters)
 │       ├── adapters/
-│       │   ├── storage/                         # ETS In-Memory Storage Repositories (nanosecond reads)
+│       │   ├── storage/                         # In-Memory ETS Repos + Ecto PostgreSQL Persistence
+│       │   │   ├── memory_repos.ex              # Microsecond ETS table adapters
+│       │   │   ├── repo.ex                      # Ecto Postgres Repository
+│       │   │   ├── click_schema.ex              # Ecto Clicks Table Schema
+│       │   │   └── db_init.ex                   # Table auto-provisioning
 │       │   ├── queue/                           # ClickBufferWorker (batch persistence) & PostbackSenderWorker
 │       │   └── detectors/                       # GeoIP, User-Agent device parser, Bot/Proxy heuristics
 │       └── web/                                 # Bandit HTTP Endpoint & 13-route Regex Router
@@ -186,8 +200,9 @@ Supports argument syntax (`{sub_id:2}`), raw unencoded mode (`{keyword!}`), conv
 ### Requirements
 * **Elixir**: 1.20+
 * **Erlang/OTP**: 29+
+* **PostgreSQL** (optional for persistence): 14+
 
-### Setup & Run
+### Setup & Run (Standalone)
 ```bash
 # 1. Fetch dependencies
 mix deps.get
@@ -203,7 +218,7 @@ iex -S mix
 
 ### Running Tests & Benchmarks
 ```bash
-# Run all 49 unit, integration, and stress tests
+# Run all 52 unit, integration, batch persistence, and stress tests
 mix test
 
 # Run high-concurrency stress benchmark specifically
@@ -212,29 +227,24 @@ mix test test/load_and_stress_test.exs
 
 ---
 
-## 🐳 Production Deployment & Docker
+## 🐳 Production Deployment (Docker & Docker Compose)
 
 ### Environment Variables
 | Variable | Description | Default |
 |---|---|---|
 | `PORT` | HTTP server listening port | `4000` |
+| `DATABASE_URL` | PostgreSQL connection URL | `nil` (in-memory only if omitted) |
+| `POOL_SIZE` | Database connection pool size | `25` |
 | `GATEWAY_SECRET` | Secret key for DoubleMeta JWT token derivation | `traffic_redirect_prod_secret_key` |
 | `DISABLE_STATS` | Disable click persistence queue | `false` |
 | `FORCE_SSL` | Force 301 HTTPS redirects | `false` |
 
-### Docker Build & Run
+### Start Complete Stack (PostgreSQL + Engine)
 ```bash
-# Build production multi-stage Alpine release image
-docker build -t traffic_redirect:latest .
+# Start tuned PostgreSQL 16 + TrafficRedirect engine
+docker compose up -d --build
 
-# Run container
-docker run -d -p 4000:4000 \
-  -e PORT=4000 \
-  -e GATEWAY_SECRET="super_secure_jwt_secret_2026" \
-  --name traffic_engine \
-  traffic_redirect:latest
-
-# Run wrk benchmark against container
+# Run live benchmark against the stack
 wrk -t10 -c100 -d10s --latency "http://localhost:4000/ping"
 ```
 
