@@ -27,6 +27,8 @@ defmodule TrafficRedirect.MixProject do
       {:jason, "~> 1.4"},
       {:finch, "~> 0.19"},
       {:telemetry, "~> 1.2"},
+      {:ecto_sql, "~> 3.12"},
+      {:postgrex, ">= 0.0.0"},
       {:mox, "~> 1.2", only: :test}
     ]
   end

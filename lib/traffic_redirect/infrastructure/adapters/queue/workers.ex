@@ -55,12 +55,28 @@ defmodule TrafficRedirect.Infrastructure.Adapters.Queue.ClickBufferWorker do
 
   defp flush_buffer([]), do: :ok
   defp flush_buffer(buffer) do
-    # Batch write clicks to ETS / Disk
+    # 1. Update In-Memory ETS table
     Enum.each(buffer, fn click ->
       if click.sub_id do
         :ets.insert(:clicks, {click.sub_id, click})
       end
     end)
+
+    # 2. Batch write into PostgreSQL if Repo is active
+    repo = TrafficRedirect.Infrastructure.Adapters.Storage.Repo
+    if Process.whereis(repo) != nil do
+      db_records = Enum.map(buffer, &TrafficRedirect.Infrastructure.Adapters.Storage.ClickSchema.from_raw_click/1)
+      try do
+        repo.insert_all(
+          TrafficRedirect.Infrastructure.Adapters.Storage.ClickSchema,
+          db_records,
+          on_conflict: :nothing
+        )
+      rescue
+        _ -> :ok
+      end
+    end
+
     :ok
   end
 

@@ -1,6 +1,7 @@
 import Config
 
 config :traffic_redirect,
+  ecto_repos: [TrafficRedirect.Infrastructure.Adapters.Storage.Repo],
   port: 4000,
   gateway_secret: "traffic_redirect_default_secret_2026",
   disable_stats: false,
