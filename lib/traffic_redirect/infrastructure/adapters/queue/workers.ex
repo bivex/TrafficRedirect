@@ -2,14 +2,14 @@ defmodule TrafficRedirect.Infrastructure.Adapters.Queue.ClickBufferWorker do
   @moduledoc """
   High-throughput in-memory batch click persistence worker.
   Buffers clicks in memory with non-blocking enqueue (< 1 microsecond),
-  and periodically flushes them in batches to disk/database.
+  and periodically flushes them in batches to disk/database without blocking the actor mailbox.
   """
   use GenServer
   alias TrafficRedirect.Domain.Model.RawClick
 
   @behaviour TrafficRedirect.Application.Ports.Outbound.ClickQueuePort
 
-  @batch_size 2_000
+  @batch_size 1_000
   @flush_interval_ms 500
 
   def start_link(_opts) do
@@ -43,7 +43,7 @@ defmodule TrafficRedirect.Infrastructure.Adapters.Queue.ClickBufferWorker do
   end
 
   def handle_call(:flush, _from, %{buffer: buffer} = _state) do
-    flush_buffer(buffer)
+    flush_buffer_sync(buffer)
     {:reply, :ok, %{buffer: [], count: 0}}
   end
 
@@ -55,14 +55,41 @@ defmodule TrafficRedirect.Infrastructure.Adapters.Queue.ClickBufferWorker do
 
   defp flush_buffer([]), do: :ok
   defp flush_buffer(buffer) do
-    # 1. Update In-Memory ETS table
+    # 1. Zero-latency in-memory ETS table update
     Enum.each(buffer, fn click ->
       if click.sub_id do
         :ets.insert(:clicks, {click.sub_id, click})
       end
     end)
 
-    # 2. Batch write into PostgreSQL if Repo is active
+    # 2. Asynchronous non-blocking PostgreSQL batch persistence
+    repo = TrafficRedirect.Infrastructure.Adapters.Storage.Repo
+    if Process.whereis(repo) != nil do
+      Task.start(fn ->
+        db_records = Enum.map(buffer, &TrafficRedirect.Infrastructure.Adapters.Storage.ClickSchema.from_raw_click/1)
+        try do
+          repo.insert_all(
+            TrafficRedirect.Infrastructure.Adapters.Storage.ClickSchema,
+            db_records,
+            on_conflict: :nothing
+          )
+        rescue
+          _ -> :ok
+        end
+      end)
+    end
+
+    :ok
+  end
+
+  defp flush_buffer_sync([]), do: :ok
+  defp flush_buffer_sync(buffer) do
+    Enum.each(buffer, fn click ->
+      if click.sub_id do
+        :ets.insert(:clicks, {click.sub_id, click})
+      end
+    end)
+
     repo = TrafficRedirect.Infrastructure.Adapters.Storage.Repo
     if Process.whereis(repo) != nil do
       db_records = Enum.map(buffer, &TrafficRedirect.Infrastructure.Adapters.Storage.ClickSchema.from_raw_click/1)
@@ -106,7 +133,6 @@ defmodule TrafficRedirect.Infrastructure.Adapters.Queue.PostbackSenderWorker do
   end
 
   def handle_cast({:send_postback, _postback}, state) do
-    # Dispatches postback request asynchronously via HTTP client
     {:noreply, state}
   end
 end

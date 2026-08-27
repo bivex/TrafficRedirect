@@ -19,9 +19,17 @@ defmodule TrafficRedirect.Infrastructure.Web.Router do
     TrackerScriptHandler
   }
 
+  plug :fetch_query_params
   plug :match
-  plug Plug.Parsers, parsers: [:urlencoded, :multipart, :json], json_decoder: Jason
+  plug :maybe_parse_body
   plug :dispatch
+
+  @parsers_opts Plug.Parsers.init(parsers: [:urlencoded, :multipart, :json], json_decoder: Jason)
+
+  defp maybe_parse_body(%Plug.Conn{method: method} = conn, _opts) when method in ["POST", "PUT", "PATCH"] do
+    Plug.Parsers.call(conn, @parsers_opts)
+  end
+  defp maybe_parse_body(conn, _opts), do: conn
 
   # 1. Postback Routes: /{key}/postback OR ?postback= OR ?key=
   get "/:key/postback" do

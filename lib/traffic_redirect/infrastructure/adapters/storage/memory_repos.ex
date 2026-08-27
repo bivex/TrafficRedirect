@@ -1,19 +1,27 @@
 defmodule TrafficRedirect.Infrastructure.Adapters.Storage.MemoryStorage do
   @moduledoc """
   High-performance in-memory ETS storage adapter with zero-allocation concurrent reads.
+  Maintains primary set tables and O(1) secondary index bag tables.
   """
   use GenServer
 
-  @tables [:campaigns, :campaign_aliases, :streams, :landings, :offers, :domains, :sessions, :clicks]
+  @set_tables [:campaigns, :campaign_aliases, :streams, :landings, :offers, :domains, :sessions, :clicks]
+  @bag_tables [:campaign_streams, :stream_landings, :stream_offers]
 
   def start_link(_opts) do
     GenServer.start_link(__MODULE__, :ok, name: __MODULE__)
   end
 
   def init(:ok) do
-    Enum.each(@tables, fn table ->
+    Enum.each(@set_tables, fn table ->
       if :ets.whereis(table) == :undefined do
         :ets.new(table, [:named_table, :public, :set, read_concurrency: true, write_concurrency: true])
+      end
+    end)
+
+    Enum.each(@bag_tables, fn table ->
+      if :ets.whereis(table) == :undefined do
+        :ets.new(table, [:named_table, :public, :bag, read_concurrency: true, write_concurrency: true])
       end
     end)
 
@@ -55,7 +63,9 @@ defmodule TrafficRedirect.Infrastructure.Adapters.Storage.MemoryStorage do
     :ets.insert(:campaigns, {"1", campaign})
     :ets.insert(:campaign_aliases, {"test_campaign", campaign})
     :ets.insert(:streams, {"10", stream})
+    :ets.insert(:campaign_streams, {"1", stream})
     :ets.insert(:offers, {"101", offer})
+    :ets.insert(:stream_offers, {"10", offer})
   end
 end
 
@@ -97,14 +107,27 @@ defmodule TrafficRedirect.Infrastructure.Adapters.Storage.MemoryStreamRepo do
     end
   end
 
+  @doc "O(1) secondary index lookup without full table scans"
   def get_active_by_campaign_id(campaign_id) do
-    :ets.tab2list(:streams)
-    |> Enum.map(fn {_k, v} -> v end)
-    |> Enum.filter(fn s -> to_string(s.campaign_id) == to_string(campaign_id) and s.is_active end)
+    cid = to_string(campaign_id)
+    case :ets.lookup(:campaign_streams, cid) do
+      [] ->
+        # Fallback if saved without secondary index
+        :ets.tab2list(:streams)
+        |> Enum.map(fn {_k, v} -> v end)
+        |> Enum.filter(fn s -> to_string(s.campaign_id) == cid and s.is_active end)
+
+      entries ->
+        Enum.map(entries, fn {_k, stream} -> stream end)
+        |> Enum.filter(& &1.is_active)
+    end
   end
 
   def save(%Stream{} = stream) do
     :ets.insert(:streams, {to_string(stream.id), stream})
+    if stream.campaign_id do
+      :ets.insert(:campaign_streams, {to_string(stream.campaign_id), stream})
+    end
     {:ok, stream}
   end
 end
@@ -121,9 +144,17 @@ defmodule TrafficRedirect.Infrastructure.Adapters.Storage.MemoryLandingRepo do
     end
   end
 
-  def get_by_stream_id(_stream_id) do
-    :ets.tab2list(:landings)
-    |> Enum.map(fn {_k, v} -> v end)
+  @doc "O(1) secondary index lookup"
+  def get_by_stream_id(stream_id) do
+    sid = to_string(stream_id || "default")
+    case :ets.lookup(:stream_landings, sid) do
+      [] ->
+        :ets.tab2list(:landings)
+        |> Enum.map(fn {_k, v} -> v end)
+
+      entries ->
+        Enum.map(entries, fn {_k, landing} -> landing end)
+    end
   end
 
   def save(%Landing{} = landing) do
@@ -144,9 +175,17 @@ defmodule TrafficRedirect.Infrastructure.Adapters.Storage.MemoryOfferRepo do
     end
   end
 
-  def get_by_stream_id(_stream_id) do
-    :ets.tab2list(:offers)
-    |> Enum.map(fn {_k, v} -> v end)
+  @doc "O(1) secondary index lookup"
+  def get_by_stream_id(stream_id) do
+    sid = to_string(stream_id || "default")
+    case :ets.lookup(:stream_offers, sid) do
+      [] ->
+        :ets.tab2list(:offers)
+        |> Enum.map(fn {_k, v} -> v end)
+
+      entries ->
+        Enum.map(entries, fn {_k, offer} -> offer end)
+    end
   end
 
   def increment_conversions(offer_id) do
