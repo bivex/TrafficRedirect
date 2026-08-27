@@ -98,7 +98,8 @@ defmodule TrafficRedirect.Domain.Pipeline.Stages do
       campaign_repo = Map.get(ctx, :campaign_repo)
       domain_repo = Map.get(ctx, :domain_repo)
       
-      alias_param = req && (Map.get(req.query_params || %{}, "k_router_campaign") || Map.get(req.query_params || %{}, "alias"))
+      query_params = (req && Map.get(req, :query_params, %{})) || %{}
+      alias_param = Map.get(query_params, "k_router_campaign") || Map.get(query_params, "alias")
       host = (req && Map.get(req, :host)) || "localhost"
 
       campaign =
