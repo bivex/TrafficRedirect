@@ -250,5 +250,19 @@ wrk -t10 -c100 -d10s --latency "http://localhost:4000/ping"
 
 ---
 
+## 📚 Documentation Guides
+
+Detailed technical specifications and integration guides are available in the [`docs/`](file:///Volumes/External/Code/TrafficRedirect/docs) directory:
+
+* 🏛️ [**Architecture & OTP Supervision Model**](file:///Volumes/External/Code/TrafficRedirect/docs/ARCHITECTURE.md) — Hexagonal DDD layers, Port interfaces, lock-free concurrency model.
+* ⚙️ [**Click Pipeline & 30 Stages Reference**](file:///Volumes/External/Code/TrafficRedirect/docs/PIPELINE_AND_STAGES.md) — Detailed execution steps from static asset offload to batch persistence.
+* 🎯 [**Filters & Redirect Actions Reference**](file:///Volumes/External/Code/TrafficRedirect/docs/FILTERS_AND_ACTIONS.md) — Complete specification for all 26 filters and 18 contextual redirect actions.
+* 🏷️ [**Macro Engine & 39 Built-in Macros**](file:///Volumes/External/Code/TrafficRedirect/docs/MACROS_REFERENCE.md) — Token syntax, unencoded raw flags, and parameter resolution.
+* 🌐 [**JavaScript Tracker SDK Guide**](file:///Volumes/External/Code/TrafficRedirect/docs/JS_TRACKER_GUIDE.md) — Client integration, auto CTA link rewriting, form injection, and engagement beacons.
+* 🚀 [**Production Deployment & Performance Tuning**](file:///Volumes/External/Code/TrafficRedirect/docs/DEPLOYMENT_AND_TUNING.md) — Docker Compose setup, PostgreSQL WAL tuning, and hardware sizing.
+
+---
+
 ## 📄 License
 Proprietary / All Rights Reserved.
+
