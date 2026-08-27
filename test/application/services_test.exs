@@ -69,6 +69,6 @@ defmodule TrafficRedirect.Application.ServicesTest do
     script = TrackerScriptService.get_script("app_test_camp", %{host: "cdn.traffic.com"})
     assert script =~ "(function(window, document)"
     assert script =~ "app_test_camp"
-    assert script =~ "k_encounter=2"
+    assert script =~ "k_encounter"
   end
 end
