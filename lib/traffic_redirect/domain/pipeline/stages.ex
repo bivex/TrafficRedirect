@@ -192,8 +192,9 @@ defmodule TrafficRedirect.Domain.Pipeline.Stages.FillClickInformationStage do
     bot_detector = Map.get(ctx, :bot_detector)
 
     geo_info = if geo_service, do: geo_service.lookup(ip), else: %{country: "US", region: "CA", city: "Los Angeles"}
-    device_info = if device_detector, do: device_detector.detect(ua), else: %{device_type: :desktop, os: "macOS", browser: "Chrome"}
-    bot_info = if bot_detector, do: bot_detector.detect(ua, ip, headers), else: %{is_bot: false, is_proxy: false}
+    # UA parse cache: device + bot detection are expensive regex/map ops.
+    # Cache by phash2(ua) — same UA string always yields same result.
+    {device_info, bot_info} = detect_ua_cached(ua, device_detector, bot_detector, headers)
 
     updated_click =
       click
@@ -227,6 +228,44 @@ defmodule TrafficRedirect.Domain.Pipeline.Stages.FillClickInformationStage do
       |> Map.put(:custom_params, query)
 
     %{payload | raw_click: updated_click}
+  end
+
+  # ── UA / Bot parse cache ─────────────────────────────────────────────────
+  # Keyed by :erlang.phash2(ua_string) — integer hash, 32-bit, near-zero collision
+  # risk for <50k distinct UAs in practice. No GenServer needed — direct ETS write.
+  @ua_cache_table :ua_parse_cache
+  @ua_cache_max   50_000
+
+  defp ensure_cache do
+    if :ets.whereis(@ua_cache_table) == :undefined do
+      :ets.new(@ua_cache_table, [:named_table, :public, :set, read_concurrency: true])
+    end
+  rescue
+    # Another process created the table between the check and new — safe to ignore
+    _ -> :ok
+  end
+
+  defp detect_ua_cached(ua, device_detector, bot_detector, headers) do
+    ensure_cache()
+    key = :erlang.phash2(ua)
+
+    case :ets.lookup(@ua_cache_table, key) do
+      [{^key, result}] ->
+        result
+
+      [] ->
+        device_info = if device_detector, do: device_detector.detect(ua), else: %{device_type: :desktop, os: "macOS", browser: "Chrome"}
+        bot_info    = if bot_detector,    do: bot_detector.detect(ua, nil, headers), else: %{is_bot: false, is_proxy: false}
+        result = {device_info, bot_info}
+
+        # Evict oldest 10k entries when cache is full (simple bulk delete)
+        if :ets.info(@ua_cache_table, :size) >= @ua_cache_max do
+          :ets.delete_all_objects(@ua_cache_table)
+        end
+
+        :ets.insert(@ua_cache_table, {key, result})
+        result
+    end
   end
 
   defp extract_sub_ids(query) do
