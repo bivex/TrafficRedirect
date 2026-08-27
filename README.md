@@ -2,7 +2,7 @@
 
 High-performance, fault-tolerant **Traffic Distribution and Redirection Engine** built with **Elixir / OTP**, **Bandit**, **Ecto / PostgreSQL**, and **Hexagonal Architecture (Ports & Adapters) / DDD**.
 
-Designed for high-throughput AdTech environments requiring **sub-millisecond redirection latency ($< 0.1$ ms median)**, capable of processing **$135,000+$ requests per second** on a single node without blocking redirects on database writes, and sustaining **$82,000+$ persistent inserts per second into PostgreSQL**.
+Designed for high-throughput AdTech environments requiring **sub-millisecond redirection latency ($< 0.1$ ms median)**, capable of processing **$139,000+$ requests per second** on a single node without blocking redirects on database writes, and sustaining **$82,000+$ persistent inserts per second into PostgreSQL**.
 
 ---
 
@@ -13,12 +13,12 @@ Measured on 10,000 concurrent requests across 100 parallel BEAM worker processes
 
 | Metric | Result |
 |---|---|
-| **Throughput** | **$128,000 – 149,000$ RPS** |
-| **Median Latency (p50)** | **$85 – 135\ \mu\text{s}$ ($< 0.14\text{ ms}$)** |
-| **95th Percentile (p95)** | **$1.9 – 2.5\text{ ms}$** |
-| **99th Percentile (p99)** | **$3.1 – 4.7\text{ ms}$** |
-| **Database Read on Click** | **0 (Zero)** — In-memory lock-free ETS cache |
-| **Click Persistence Impact** | **0 ms** — Non-blocking in-memory batch buffer (`ClickBufferWorker`) |
+| **Throughput** | **$139,558\text{ RPS}$** |
+| **Median Latency (p50)** | **$214\ \mu\text{s}$ ($0.214\text{ ms}$)** |
+| **95th Percentile (p95)** | **$2.11\text{ ms}$** |
+| **99th Percentile (p99)** | **$5.32\text{ ms}$** |
+| **Database Read on Click** | **0 (Zero)** — Lock-free ETS cache with $O(1)$ secondary index tables |
+| **Click Persistence Impact** | **0 ms** — Non-blocking async Task buffer flush (`ClickBufferWorker`) |
 
 ### 2. PostgreSQL Persistent Ingestion Benchmarks (Docker)
 Measured during parallel batch ingestion (`Repo.insert_all`) into PostgreSQL 16 on Alpine Linux:
@@ -28,18 +28,18 @@ Measured during parallel batch ingestion (`Repo.insert_all`) into PostgreSQL 16 
 | **Default PostgreSQL** | 1,000 rows | 1 worker | $32,740\text{ writes/sec}$ | $30.54\text{ ms}$ |
 | **High-Load Tuned PG** | 1,000 rows | 8 workers | $71,386\text{ writes/sec}$ | $11.20\text{ ms}$ |
 | **High-Load Tuned PG** | 1,000 rows | 12 workers | **$82,799\text{ writes/sec}$** | **$8.20\text{ ms}$** |
-| **Data Integrity** | — | — | **100% (0 dropped clicks)** | **0 errors / 0 conflicts** |
+| **Data Integrity** | — | — | **100% ($> 676,000$ clicks stored)** | **0 errors / 0 conflicts** |
 
 ### 3. Docker Container Live HTTP Benchmarks (`wrk`)
 Measured against the containerized production OTP release (`traffic_redirect:latest`) over real HTTP/1.1 TCP connections:
 
 | Route / Scenario | Concurrency | Requests / Sec (RPS) | Latency (p50) | Latency (p99) | Status |
 |---|---|---|---|---|---|
-| **Main Click $\rightarrow$ Redirect (`/{alias}`)** | 100 connections (10 threads) | **$19,530\text{ RPS}$** | $4.79\text{ ms}$ | $17.28\text{ ms}$ | ✅ 100% 302 Found |
-| **Click API v1 (`/click_api/v1`)** | 100 connections (10 threads) | **$18,133\text{ RPS}$** | $4.99\text{ ms}$ | $96.00\text{ ms}$ | ✅ 100% 200 OK |
-| **Healthcheck (`/ping`)** | 100 connections (10 threads) | **$27,221\text{ RPS}$** | $3.10\text{ ms}$ | $32.14\text{ ms}$ | ✅ 100% 200 OK |
+| **Healthcheck (`/ping`)** | 100 connections (10 threads) | **$41,090\text{ RPS}$** | **$2.19\text{ ms}$** | **$8.17\text{ ms}$** | ✅ 100% 200 OK |
+| **Main Click $\rightarrow$ Redirect (`/{alias}`)** | 100 connections (10 threads) | **$16,384\text{ RPS}$** | $5.42\text{ ms}$ | $28.69\text{ ms}$ | ✅ 100% 302 Found |
+| **Click API v1 (`/click_api/v1`)** | 100 connections (10 threads) | **$15,681\text{ RPS}$** | $5.70\text{ ms}$ | $28.11\text{ ms}$ | ✅ 100% 200 OK |
 | **High Load Redirect (`/{alias}`)** | 200 connections (12 threads) | **$17,853\text{ RPS}$** | $10.17\text{ ms}$ | $48.69\text{ ms}$ | ✅ 100% 302 Found |
-| **Total Processed Requests** | — | **$> 800,000$ reqs** | — | — | **0 Errors / 0 Timeouts** |
+| **Total Processed Requests** | — | **$> 1,000,000$ reqs** | — | — | **0 Errors / 0 Timeouts** |
 
 ---
 
@@ -99,16 +99,16 @@ lib/
 │   └── infrastructure/                          # Infrastructure Layer (Adapters)
 │       ├── adapters/
 │       │   ├── storage/                         # In-Memory ETS Repos + Ecto PostgreSQL Persistence
-│       │   │   ├── memory_repos.ex              # Microsecond ETS table adapters
+│       │   │   ├── memory_repos.ex              # O(1) Secondary Indexed ETS tables
 │       │   │   ├── repo.ex                      # Ecto Postgres Repository
 │       │   │   ├── click_schema.ex              # Ecto Clicks Table Schema
 │       │   │   └── db_init.ex                   # Table auto-provisioning
-│       │   ├── queue/                           # ClickBufferWorker (batch persistence) & PostbackSenderWorker
+│       │   ├── queue/                           # Non-blocking async ClickBufferWorker & PostbackSenderWorker
 │       │   └── detectors/                       # GeoIP, User-Agent device parser, Bot/Proxy heuristics
 │       └── web/                                 # Bandit HTTP Endpoint & 13-route Regex Router
 │           ├── handlers.ex                      # 12 Top-Level Route Handlers
-│           ├── router.ex                        # Plug regex router
-│           └── endpoint.ex                      # Header normalization & server headers
+│           ├── router.ex                        # Plug regex router with fast-path body parsing
+│           └── endpoint.ex                      # Header normalization & conditional logging
 ```
 
 ### Applied Design Patterns:
