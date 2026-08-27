@@ -9,7 +9,7 @@ defmodule TrafficRedirect.Infrastructure.Adapters.Queue.ClickBufferWorker do
 
   @behaviour TrafficRedirect.Application.Ports.Outbound.ClickQueuePort
 
-  @batch_size 1_000
+  @batch_size 2_000
   @flush_interval_ms 500
 
   def start_link(_opts) do

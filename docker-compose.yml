@@ -6,6 +6,19 @@ services:
       POSTGRES_USER: postgres
       POSTGRES_PASSWORD: postgres
       POSTGRES_DB: traffic_redirect
+    shm_size: 1gb
+    command: >
+      postgres
+      -c synchronous_commit=off
+      -c wal_buffers=64MB
+      -c checkpoint_timeout=15min
+      -c max_wal_size=8GB
+      -c checkpoint_completion_target=0.9
+      -c shared_buffers=1GB
+      -c work_mem=32MB
+      -c random_page_cost=1.1
+    volumes:
+      - pgdata:/var/lib/postgresql/data
     ports:
       - "5432:5432"
     healthcheck:
@@ -25,6 +38,9 @@ services:
       PORT: "4000"
       GATEWAY_SECRET: "pg_bench_secret_2026"
       DATABASE_URL: "ecto://postgres:postgres@postgres:5432/traffic_redirect"
-      POOL_SIZE: "25"
+      POOL_SIZE: "30"
     ports:
       - "4000:4000"
+
+volumes:
+  pgdata:
