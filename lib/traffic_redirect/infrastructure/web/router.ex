@@ -1,9 +1,28 @@
 defmodule TrafficRedirect.Infrastructure.Web.Router do
   @moduledoc """
-  Regex-based high-performance HTTP router matching the 13 specification routes.
-  Injects captured groups (k_router_campaign, k_router_key, version) into conn.params.
+  Ordered regex-based HTTP router matching the 13 specification routes.
+  Route priority: first match wins.
+  Captured groups (k_router_campaign, k_router_key, version) are injected into conn.params.
+
+  ## Route Table (13 routes, spec §3.1)
+  | #  | Pattern                                       | Handler                | Purpose                        |
+  |----|-----------------------------------------------|------------------------|--------------------------------|
+  | 1  | /{key}/postback, /postback, ?postback=, ?key= | PostbackHandler        | Conversion postback ingestion  |
+  | 2  | /ping, ?ping=                                 | PingDomainHandler      | Domain health check            |
+  | 3  | /preview, ?preview=                           | SitePreviewHandler     | Landing preview                |
+  | 4  | /license/refresh                              | RefreshLicenseHandler  | License refresh                |
+  | 5  | /click_api/v{n} (v1-v4), /api.php             | ClickApiHandler        | Server-to-server Click API     |
+  | 6  | ?return= (not jsonp)                          | LandingOfferHandler    | Offer click from landing page  |
+  | 7  | /{alias}?tracker=v2 or ?legacy_tracker=1      | LegacyTrackerHandler   | Legacy JS tracker              |
+  | 8  | /{alias}?k_encounter=2 or ?tracker=1          | TrackerScriptHandler   | IIFE JS tracker script         |
+  | 9  | /gateway.php?frm=dm&token=...                 | GatewayRedirectHandler | Double-meta intermediate hop   |
+  | 10 | /favicon.ico                                  | NotFoundHandler        | 404                            |
+  | 11 | /robots.txt                                   | RobotsHandler          | Robots disallow                |
+  | 12 | /{alias}                                      | ClickHandler           | Main click → redirect          |
+  | 13 | catch-all                                     | ClickHandler           | Click without alias            |
   """
   use Plug.Router
+
   alias TrafficRedirect.Infrastructure.Web.Handlers.{
     ClickHandler,
     ClickApiHandler,
@@ -31,7 +50,10 @@ defmodule TrafficRedirect.Infrastructure.Web.Router do
   end
   defp maybe_parse_body(conn, _opts), do: conn
 
-  # 1. Postback Routes: /{key}/postback OR ?postback= OR ?key=
+  # ──────────────────────────────────────────────────────────────────────────
+  # Route 1: Postback – static path patterns (query-param variants in match _)
+  # ──────────────────────────────────────────────────────────────────────────
+
   get "/:key/postback" do
     conn = update_params(conn, %{"k_router_key" => key, "key" => key})
     PostbackHandler.handle(conn)
@@ -50,22 +72,34 @@ defmodule TrafficRedirect.Infrastructure.Web.Router do
     PostbackHandler.handle(conn)
   end
 
-  # 2. Ping Domain
+  # ──────────────────────────────────────────────────────────────────────────
+  # Route 2: Ping Domain
+  # ──────────────────────────────────────────────────────────────────────────
+
   get "/ping" do
     PingDomainHandler.handle(conn)
   end
 
-  # 3. Site Preview
+  # ──────────────────────────────────────────────────────────────────────────
+  # Route 3: Site Preview
+  # ──────────────────────────────────────────────────────────────────────────
+
   get "/preview" do
     SitePreviewHandler.handle(conn)
   end
 
-  # 4. Refresh License
+  # ──────────────────────────────────────────────────────────────────────────
+  # Route 4: License Refresh
+  # ──────────────────────────────────────────────────────────────────────────
+
   get "/license/refresh" do
     RefreshLicenseHandler.handle(conn)
   end
 
-  # 5. Click API: /click_api/v:version AND /api.php
+  # ──────────────────────────────────────────────────────────────────────────
+  # Route 5: Click API – /click_api/v{n} (v1-v4) and legacy /api.php
+  # ──────────────────────────────────────────────────────────────────────────
+
   get "/click_api/v:version" do
     ver = parse_int(version, 1)
     conn = update_params(conn, %{"version" => ver})
@@ -86,66 +120,83 @@ defmodule TrafficRedirect.Infrastructure.Web.Router do
     ClickApiHandler.handle(conn, 1)
   end
 
-  # 9. Gateway Redirect (/gateway.php)
+  # ──────────────────────────────────────────────────────────────────────────
+  # Route 9: Gateway Redirect – double-meta intermediate hop
+  # ──────────────────────────────────────────────────────────────────────────
+
   get "/gateway.php" do
     GatewayRedirectHandler.handle(conn)
   end
 
-  # 10. Favicon 404
+  # ──────────────────────────────────────────────────────────────────────────
+  # Route 10: Favicon → 404
+  # ──────────────────────────────────────────────────────────────────────────
+
   get "/favicon.ico" do
     NotFoundHandler.handle(conn)
   end
 
-  # 11. Robots.txt
+  # ──────────────────────────────────────────────────────────────────────────
+  # Route 11: Robots
+  # ──────────────────────────────────────────────────────────────────────────
+
   get "/robots.txt" do
     RobotsHandler.handle(conn)
   end
 
-  # Routes 6, 7, 8, 12, 13 handled by alias or query parameter checks
+  # ──────────────────────────────────────────────────────────────────────────
+  # Routes 1(q), 2(q), 3(q), 6, 7, 8, 12, 13 — query-param based dispatch
+  # Priority order matches spec §3.1 table
+  # ──────────────────────────────────────────────────────────────────────────
+
   match _ do
-    params = conn.params || %{}
+    params    = conn.params || %{}
     path_info = conn.path_info
 
     cond do
-      # 1. Check ?postback= parameter
-      Map.has_key?(params, "postback") ->
+      # Route 1 (query variant): ?postback= or ?key=
+      Map.has_key?(params, "postback") or Map.has_key?(params, "key") and Map.has_key?(params, "sub_id") ->
         PostbackHandler.handle(conn)
 
-      # 2. Check ?ping= parameter
+      # Route 2 (query variant): ?ping=
       Map.has_key?(params, "ping") ->
         PingDomainHandler.handle(conn)
 
-      # 3. Check ?preview= parameter
+      # Route 3 (query variant): ?preview=
       Map.has_key?(params, "preview") ->
         SitePreviewHandler.handle(conn)
 
-      # 6. Check ?return= parameter (LandingOfferHandler)
+      # Route 6: ?return= (but not ?return=jsonp – that is pixel/jsonp action)
       Map.has_key?(params, "return") and Map.get(params, "return") != "jsonp" ->
         LandingOfferHandler.handle(conn)
 
-      # 7. Legacy JS Tracker v2 check
+      # Route 7: Legacy JS Tracker v2 – ?tracker=v2 or ?legacy_tracker=1
       Map.get(params, "tracker") == "v2" or Map.get(params, "legacy_tracker") == "1" ->
         alias_name = List.first(path_info) || "default"
         conn = update_params(conn, %{"k_router_campaign" => alias_name})
         LegacyTrackerHandler.handle(conn)
 
-      # 8. Tracker script generator check
+      # Route 8: IIFE Tracker Script – ?k_encounter=2 or ?tracker=1
       Map.has_key?(params, "k_encounter") or Map.get(params, "tracker") == "1" ->
         alias_name = List.first(path_info) || "default"
         conn = update_params(conn, %{"k_router_campaign" => alias_name})
         TrackerScriptHandler.handle(conn)
 
-      # 12. Main Click with alias /{alias}
+      # Route 12: Main click with campaign alias /{alias}
       path_info != [] ->
         alias_name = List.first(path_info)
         conn = update_params(conn, %{"k_router_campaign" => alias_name})
         ClickHandler.handle(conn)
 
-      # 13. Catch-all Click without alias
+      # Route 13: Catch-all click (no alias in path)
       true ->
         ClickHandler.handle(conn)
     end
   end
+
+  # ──────────────────────────────────────────────────────────────────────────
+  # Private helpers
+  # ──────────────────────────────────────────────────────────────────────────
 
   defp update_params(conn, new_params) do
     existing = conn.params || %{}
@@ -156,7 +207,7 @@ defmodule TrafficRedirect.Infrastructure.Web.Router do
     if is_binary(val) do
       case Integer.parse(val) do
         {num, _} -> num
-        :error -> default
+        :error   -> default
       end
     else
       default
